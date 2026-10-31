@@ -1,0 +1,15 @@
+{
+  "collection": {
+    "intervalHours": 6,
+    "pagesPerSourcePerRun": 25,
+    "pagesPerSourcePerDay": 100,
+    "requestDelayMs": 1200,
+    "timeoutMs": 20000,
+    "maxResponseBytes": 5000000
+  },
+  "sources": [
+    {"id": "xvideos", "name": "XVideos", "url": "https://www.xvideos.com", "adapter": "xvideos", "enabled": true},
+    {"id": "xhamster", "name": "xHamster", "url": "https://xhamster.com", "adapter": "xhamster", "directory": "/categories", "enabled": true},
+    {"id": "pornhub", "name": "Pornhub", "url": "https://www.pornhub.com", "adapter": "pornhub", "directory": "/categories", "enabled": true}
+  ]
+}

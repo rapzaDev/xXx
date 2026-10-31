@@ -1,0 +1,40 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {JSDOM} from 'jsdom';
+import {CatalogDatabase} from '../local/database.mjs';
+import {createLocalServer} from '../local/server.mjs';
+
+test('interface usa SQLite, migra registros antigos, pagina e combina busca/categoria/favoritos',async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'dojo-ui-')),configPath=join(dir,'sources.json');
+ const source={id:'one',name:'Fonte de teste',url:'https://source.example',adapter:'xvideos',enabled:true};writeFileSync(configPath,JSON.stringify({sources:[source]}));
+ const db=new CatalogDatabase(join(dir,'catalog.sqlite'));db.syncSources([source]);const key=db.addCategory('one',{name:'Training',url:source.url+'/c/Training-1'});
+ for(let i=0;i<42;i++)db.upsertVideo('one',{externalId:`demo${String(i).padStart(4,'0')}`,sourceUrl:`https://source.example/video.demo${String(i).padStart(4,'0')}/test`,title:i===41?'Único resultado':'Vídeo de teste '+i,author:'Canal de teste',duration:'02:10',thumbnail:'https://images.example/test.jpg'},key);
+ const worker={fetch:()=>Response.json({candidates:[{url:'https://media.example/embed/test',type:'embed'}]})};const {server,collector}=createLocalServer({database:db,configPath,worker});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ collector.running=true;let poll;const queries=[];
+ const origin=`http://127.0.0.1:${server.address().port}`,dom=new JSDOM(readFileSync(new URL('../public/index.html',import.meta.url),'utf8'),{url:origin});
+ const keys=['document','window','localStorage','FormData','fetch','setInterval','setTimeout','confirm'],before=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)])),realFetch=globalThis.fetch,realTimeout=globalThis.setTimeout;
+ function install(key,value){Object.defineProperty(globalThis,key,{value,configurable:true,writable:true})}
+ install('document',dom.window.document);install('window',dom.window);install('localStorage',dom.window.localStorage);install('FormData',dom.window.FormData);install('fetch',(url,options)=>{if(String(url).endsWith('/api/catalog/query'))queries.push(JSON.parse(options.body));return realFetch(new URL(url,origin),options)});install('setInterval',callback=>{poll=callback;return 0});install('setTimeout',(fn,ms,...args)=>ms===5000?0:realTimeout(fn,ms,...args));install('confirm',()=>true);
+ Object.defineProperty(dom.window.document,'hidden',{value:false,configurable:true});
+ dom.window.HTMLElement.prototype.scrollIntoView=function(){};dom.window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};dom.window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new dom.window.Event('close'))};
+ t.after(async()=>{collector.running=false;collector.stop();for(const key of keys){const descriptor=before.get(key);if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]}dom.window.close();await new Promise(resolve=>server.close(resolve));db.close();rmSync(dir,{recursive:true,force:true})});
+ const legacy={sourceUrl:'https://example.org/previous',title:'Registro anterior',author:'Canal anterior',category:'Treino',level:'Todos',permissionConfirmed:true,permissionNote:'Registro manual de demonstração.',checkedAt:new Date().toISOString()};localStorage.setItem('dojo-atlas.catalog.v1',JSON.stringify([legacy]));
+ await import('../public/app.js?interface-test');const $=selector=>dom.window.document.querySelector(selector);
+ const waitFor=async condition=>{for(let i=0;i<150;i++){if(condition())return;await new Promise(resolve=>realTimeout(resolve,10))}throw new Error('A interface não atualizou a tempo.')};
+ assert.equal(localStorage.getItem('dojo-atlas.catalog.v1'),null);assert.equal(db.query().total,43);assert.equal(dom.window.document.querySelectorAll('.video-card').length,40);assert.match($('#result-count').textContent,/43/);
+ const initialCards=[...dom.window.document.querySelectorAll('.video-card')],initialImages=initialCards.map(card=>card.querySelector('img'));
+ for(let i=42;i<45;i++)db.upsertVideo('one',{externalId:`demo${String(i).padStart(4,'0')}`,sourceUrl:`https://source.example/video.demo${String(i).padStart(4,'0')}/test`,title:'Vídeo novo '+i,author:'Canal de teste'},key);
+ await poll();assert.equal(queries.at(-1).countOnly,true);assert.deepEqual([...dom.window.document.querySelectorAll('.video-card')],initialCards);assert.deepEqual(initialCards.map(card=>card.querySelector('img')),initialImages);assert.match($('#result-count').textContent,/46/);
+ $('#category').value=key;$('#category').dispatchEvent(new dom.window.Event('change'));await waitFor(()=>$('#result-count').textContent.startsWith('45'));
+ $('#next-page').click();await waitFor(()=>$('#page-info').textContent==='Página 2 de 2');assert.equal(dom.window.document.querySelectorAll('.video-card').length,5);
+ const partialCards=[...dom.window.document.querySelectorAll('.video-card')];
+ for(let i=45;i<47;i++)db.upsertVideo('one',{externalId:`demo${String(i).padStart(4,'0')}`,sourceUrl:`https://source.example/video.demo${String(i).padStart(4,'0')}/test`,title:'Vídeo novo '+i,author:'Canal de teste'},key);
+ await poll();assert.equal(queries.at(-1).countOnly,false);assert.equal(dom.window.document.querySelectorAll('.video-card').length,7);assert.deepEqual([...dom.window.document.querySelectorAll('.video-card')].slice(0,5),partialCards);assert.equal($('#page-info').textContent,'Página 2 de 2');
+ $('#search').value='unico';$('#search').dispatchEvent(new dom.window.Event('input'));await waitFor(()=>$('#result-count').textContent.startsWith('1 '));assert.equal($('.card-top h3').textContent,'Único resultado');
+ $('.card-top button').click();assert.equal(JSON.parse(localStorage.getItem('dojo-atlas.saved.v1')).length,1);$('#saved-tab').click();await waitFor(()=>$('#result-count').textContent.includes('nos favoritos'));assert.equal(dom.window.document.querySelectorAll('.video-card').length,1);
+ $('.card-cover').click();await waitFor(()=>Boolean($('#player iframe')));assert.equal($('#watch').hasAttribute('open'),true);assert.equal($('#remove').hidden,true);$('#watch .close').click();assert.equal($('#player').childNodes.length,0);
+ assert.equal(localStorage.getItem('dojo-atlas.catalog.v1'),null);assert.deepEqual(Object.keys(localStorage),['dojo-atlas.saved.v1']);
+});

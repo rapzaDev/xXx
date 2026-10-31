@@ -28,3 +28,15 @@ test('registros antigos do XVideos ganham player sem mudar o ID usado nos favori
  assert.equal(record.embedUrl,'https://www.xvideos.com/embedframe/hpttbt0d66');
  const override=normalizeRecord({...base,sourceUrl:'https://catalog.example/watch/42',playbackUrl:sourceUrl});assert.equal(override.embedType,'official');
 });
+
+test('fontes configuradas fornecem endereços reconhecidos e xHamster solicita resolução nativa',()=>{
+ for(const [url,expected] of [
+  ['https://www.pornhub.com/view_video.php?viewkey=phDemo123','https://www.pornhub.com/embed/phDemo123'],
+  ['https://www.pornhub.com/embed/phDemo123','https://www.pornhub.com/embed/phDemo123'],
+  ['https://xhamster.com/videos/demo-xhAb123','https://xhamster.com/embed/xhAb123'],
+  ['https://xhamster.com/embed/xhAb123','https://xhamster.com/embed/xhAb123'],
+  ['https://www.xvideos.com/video.demo123/video','https://www.xvideos.com/embedframe/demo123']
+ ]){assert.equal(parseSource(url).embedType,'official');assert.equal(parseSource(url).embedUrl,expected)}
+ assert.equal(parseSource('https://xhamster.com/videos/demo-xhAb123').resolvePlayback,true);
+ for(const url of ['https://pornhub.com.evil.example/view_video.php?viewkey=phDemo123','https://xhamster.com.evil.example/videos/demo-xhAb123'])assert.equal(parseSource(url).embedType,'link');
+});

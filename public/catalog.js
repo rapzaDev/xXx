@@ -12,6 +12,14 @@ export function parseSource(value){
   const parts=u.pathname.split('/').filter(Boolean).filter(p=>p!=='video');id=parts[0];const hash=u.searchParams.get('h')||parts[1];return {provider:'Vimeo',externalId:id,sourceUrl:u.href,embedUrl:`https://player.vimeo.com/video/${id}?dnt=1${hash?'&h='+encodeURIComponent(hash):''}`,embedType:'official'};
  }
  const sourceUrl=u.href;
+ if(['pornhub.com','m.pornhub.com'].includes(host)&&!u.port){
+  const key=u.pathname==='/view_video.php'?u.searchParams.get('viewkey'):u.pathname.match(/^\/embed\/([a-z0-9_-]+)\/?$/i)?.[1];
+  if(/^[a-z0-9_-]{4,100}$/i.test(key||''))return {provider:'Outras fontes',externalId:sourceUrl,sourceUrl,sourceHost:u.hostname,embedUrl:`https://www.pornhub.com/embed/${key}`,embedType:'official',playbackProvider:'Pornhub'};
+ }
+ if(['xhamster.com','m.xhamster.com'].includes(host)&&!u.port){
+  const key=u.pathname.startsWith('/videos/')?u.pathname.replace(/\/$/,'').match(/-([a-z0-9]+)$/i)?.[1]:u.pathname==='/xembed.php'?u.searchParams.get('video'):u.pathname.match(/^\/embed\/([a-z0-9]+)\/?$/i)?.[1];
+  if(/^[a-z0-9]{3,100}$/i.test(key||''))return {provider:'Outras fontes',externalId:sourceUrl,sourceUrl,sourceHost:u.hostname,embedUrl:`https://xhamster.com/embed/${key}`,embedType:'official',playbackProvider:'xHamster',resolvePlayback:true};
+ }
  // Keep the existing source/provider identity so saved records and favorites
  // remain valid; only the playback address changes for this provider.
  if(['xvideos.com','m.xvideos.com'].includes(host)&&!u.port){
@@ -21,15 +29,15 @@ export function parseSource(value){
  const direct=/\.(mp4|webm|ogv|m4v|mov|m3u8)$/i.test(u.pathname);
  return {provider:'Outras fontes',externalId:sourceUrl,sourceUrl,embedUrl:direct&&u.protocol==='https:'?sourceUrl:null,embedType:direct?(/\.m3u8$/i.test(u.pathname)?'hls':'video'):'link',sourceHost:u.hostname};
 }
-export function normalizeRecord(raw){
+export function normalizeRecord(raw,allowedCategories=categories){
  if(!raw||typeof raw!=='object')throw new Error('Registro inválido.');
  const src=parseSource(raw.sourceUrl);
  const playbackUrl=String(raw.playbackUrl||'').trim();
- if(playbackUrl){const playback=parseSource(playbackUrl);src.embedUrl=playback.embedUrl;src.embedType=playback.embedType;src.playbackProvider=playback.provider;}
+ if(playbackUrl){const playback=parseSource(playbackUrl);src.embedUrl=playback.embedUrl;src.embedType=playback.embedType;src.playbackProvider=playback.playbackProvider||playback.provider;src.resolvePlayback=Boolean(playback.resolvePlayback);}
 
  const title=String(raw.title||'').trim(),author=String(raw.author||'').trim();
  if(!title||title.length>160||!author||author.length>100)throw new Error('Preencha título (até 160 caracteres) e autor (até 100).');
- if(!categories.includes(raw.category))throw new Error('Modalidade inválida.');
+ if(!allowedCategories.includes(raw.category))throw new Error('Modalidade inválida.');
  if(!['Iniciante','Intermediário','Avançado','Todos'].includes(raw.level))throw new Error('Nível inválido.');
  if(raw.permissionConfirmed!==true)throw new Error('Confirme a permissão para o uso informado.');
  const note=String(raw.permissionNote||'').trim();if(note.length<10||note.length>1000)throw new Error('Descreva a base da permissão (10 a 1.000 caracteres).');
@@ -38,6 +46,6 @@ export function normalizeRecord(raw){
 }
 export function parseCatalog(text){
  const parsed=JSON.parse(text);if(!Array.isArray(parsed)||parsed.length>1000)throw new Error('Importe um array JSON com até 1.000 registros.');
- const result=parsed.map(normalizeRecord);if(new Set(result.map(v=>v.id)).size!==result.length)throw new Error('O arquivo contém vídeos duplicados.');return result;
+ const result=parsed.map(raw=>normalizeRecord(raw));if(new Set(result.map(v=>v.id)).size!==result.length)throw new Error('O arquivo contém vídeos duplicados.');return result;
 }
 export function needsReview(v){return Date.now()-new Date(v.checkedAt).getTime()>30*86400000;}

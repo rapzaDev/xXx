@@ -9,7 +9,7 @@ export function openPlayback(record,box,status){
  const options=document.createElement('div');options.className='playback-options';options.hidden=true;options.setAttribute('role','group');options.setAttribute('aria-label','Opções de reprodução');box.after(options);
  function showOptions(candidates,index){
   options.hidden=candidates.length<2;
-  options.replaceChildren(...candidates.map((candidate,i)=>{const button=document.createElement('button');button.type='button';button.className='button outline';button.textContent=`Player ${i+1}`;button.setAttribute('aria-pressed',String(i===index));button.onclick=()=>play(candidates,i);return button}));
+  options.replaceChildren(...candidates.map((candidate,i)=>{const button=document.createElement('button');button.type='button';button.className='button outline';button.textContent=candidate.quality||`Player ${i+1}`;button.setAttribute('aria-pressed',String(i===index));button.onclick=()=>play(candidates,i);return button}));
  }
  function clear(){attempt++;dispose();dispose=()=>{}}
  function message(text){const p=document.createElement('p');p.textContent=text;p.setAttribute('role','status');box.replaceChildren(p)}
@@ -18,11 +18,13 @@ export function openPlayback(record,box,status){
   if(controller.signal.aborted)return;
   clear();const run=attempt,candidate=candidates[index];if(!candidate){fail('Nenhuma das opções de vídeo fornecidas pela origem pôde ser reproduzida. O link pode ter expirado ou a origem pode bloquear reprodução externa.');return}
   showOptions(candidates,index);
-  let u;try{u=new URL(candidate.url);if(u.protocol!=='https:'||u.username||u.password)throw new Error()}catch{play(candidates,index+1);return}
+  let u;try{u=new URL(candidate.url,document.baseURI||'https://local.invalid');const local=new URL(document.baseURI||'https://local.invalid');const isLocalMedia=u.origin===local.origin&&/^\/api\/playback\/[A-Za-z0-9_-]{32}$/.test(u.pathname);if((u.protocol!=='https:'&&!isLocalMedia)||u.username||u.password)throw new Error()}catch{play(candidates,index+1);return}
   const next=()=>{if(!controller.signal.aborted&&run===attempt)play(candidates,index+1)};
   status.hidden=false;
   if(['official','embed'].includes(candidate.type)){
-   const frame=document.createElement('iframe');frame.title=record.title;frame.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-presentation');frame.onerror=next;frame.src=u.href;dispose=()=>{frame.onerror=null;frame.remove()};box.replaceChildren(frame);status.textContent='Player da origem. Se o site bloquear a incorporação ou pedir login, use Abrir na fonte.';return;
+   const frame=document.createElement('iframe');frame.title=record.title;frame.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';
+   frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-presentation');
+   frame.onerror=next;frame.src=u.href;dispose=()=>{frame.onerror=null;frame.remove()};box.replaceChildren(frame);status.textContent='Player da origem. Se o site bloquear a incorporação ou pedir login, use Abrir na fonte.';return;
   }
   const video=document.createElement('video');video.controls=true;video.autoplay=true;video.playsInline=true;video.preload='metadata';video.setAttribute('aria-label',record.title);let hls;
   dispose=()=>{video.onerror=null;hls?.destroy();video.pause();video.removeAttribute('src');video.load();video.remove()};box.replaceChildren(video);video.onerror=next;
@@ -35,7 +37,7 @@ export function openPlayback(record,box,status){
  async function resolve(){
   if(controller.signal.aborted)return;clear();options.hidden=true;status.hidden=true;message('Identificando o vídeo e preparando a reprodução…');
   const target=record.playbackUrl||record.sourceUrl;
-  if(record.embedUrl&&['official','video','hls'].includes(record.embedType)){await play([{url:record.embedUrl,type:record.embedType}]);return}
+  if(!record.resolvePlayback&&record.embedUrl&&['official','video','hls'].includes(record.embedType)){await play([{url:record.embedUrl,type:record.embedType}]);return}
   try{const response=await fetch('/api/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:target}),signal:controller.signal});if(controller.signal.aborted)return;const result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível identificar o vídeo.');if(!Array.isArray(result.candidates))throw new Error('Resposta de reprodução inválida.');await play(result.candidates)}catch(error){if(!controller.signal.aborted)fail(error instanceof SyntaxError?'O serviço de reprodução está indisponível. Tente novamente.':error.message)}
  }
  resolve();return ()=>{controller.abort();clear();options.remove();box.replaceChildren();status.hidden=true};
