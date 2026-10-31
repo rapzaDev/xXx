@@ -97,3 +97,13 @@ test('vídeo antigo associado a uma categoria posteriormente entra no fim daquel
  const original=db.query({category:key,q:'exercicio',provider:'one',pageSize:2}).videos.map(v=>v.id);db.upsertVideo('one',video('old01'),key);
  assert.deepEqual(db.query({category:key,q:'exercicio',provider:'one',pageSize:2}).videos.map(v=>v.id),original);assert.equal(db.query({category:key,q:'exercicio',provider:'one',page:2,pageSize:2}).videos[0].id,'one:old01');db.close();
 });
+
+test('preview lazy usa srcset real em vez de imagem de preenchimento',()=>{
+ const markup='<div class="thumb-block"><p class="title"><a href="/video.demo123/test" title="Demonstração">Demo</a></p><img data-src="/images/transparent.gif" src="/images/blank.gif" srcset="https://images.example/s(w:320,h:180),jpeg/1.jpg 320w, https://images.example/large.jpg 640w"></div>';
+ const result=parseListing(markup,source.url,source);assert.equal(result.videos[0].thumbnail,'https://images.example/s(w:320,h:180),jpeg/1.jpg');
+});
+
+test('links de tracking do XVideos são coletados como endereços estáveis pelo ID',()=>{
+ const markup='<div class="thumb-block"><p class="title"><a href="/video.demo123/1234/0/tracking" title="Demonstração">Demo</a></p><img src="https://images.example/demo.jpg"></div>';
+ const result=parseListing(markup,source.url,source);assert.equal(result.videos[0].sourceUrl,'https://source.example/video.demo123/video');assert.equal(result.videos[0].externalId,'demo123');
+});

@@ -13,7 +13,7 @@ npm start
 
 Abra **http://localhost:4173**. A coleta começa junto com o servidor e é repetida a cada seis horas enquanto o processo estiver aberto. A interface mostra progresso, resultados e eventuais falhas por fonte. `Ctrl+C` encerra o programa; o progresso permanece salvo.
 
-O processo usa seu Mac e um banco SQLite em `.data/catalog.sqlite`. Não exige chave de IA, serviço de banco remoto ou GitHub Actions. Metadados, fila e banco não são enviados ao GitHub. Os vídeos e miniaturas continuam nas origens. Para o xHamster, o servidor local resolve as referências MP4 públicas e repassa o streaming ao elemento de vídeo, preservando solicitações de intervalo para avanço e retrocesso. Esse repasse não grava o vídeo em disco ou no SQLite. Sessões de reprodução são temporárias, em memória.
+O processo usa seu Mac e um banco SQLite em `.data/catalog.sqlite`. Não exige chave de IA, serviço de banco remoto ou GitHub Actions. Metadados, fila e banco não são enviados ao GitHub. Os arquivos originais permanecem nas fontes. As miniaturas são entregues por uma rota local para evitar falhas de carregamento externo. Links expirados são renovados a partir da página do vídeo; o navegador pode reutilizar a imagem por uma hora, sem armazenar arquivos de preview no projeto. Para o xHamster, o servidor local resolve as referências MP4 públicas e repassa o streaming ao elemento de vídeo, preservando solicitações de intervalo para avanço e retrocesso. Esse repasse não grava o vídeo em disco ou no SQLite. Sessões de reprodução são temporárias, em memória.
 
 ## Fontes e limites
 

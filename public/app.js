@@ -17,15 +17,15 @@ function renderVideos(){
   let card=existing.get(video.id);
   if(!card){
    card=el('article','video-card');card.dataset.videoId=video.id;
-   const cover=el('button','card-cover');cover.type='button';cover.append(el('small'),el('span','play','▷'));cover.onclick=()=>watch(card.videoRecord);
+   const cover=el('button','card-cover');cover.type='button';cover.append(el('span','play','▷'));cover.onclick=()=>watch(card.videoRecord);
    const top=el('div','card-top'),heart=el('button');heart.type='button';heart.onclick=()=>toggleFavorite(card.videoRecord);top.append(el('h3'),heart);
    card.append(cover,top,el('p'));
   }
   card.videoRecord=video;
   const cover=card.querySelector('.card-cover');cover.setAttribute('aria-label',`Assistir: ${video.title}`);
   const image=cover.querySelector('img');
-  if(video.thumbnail&&card.failedThumbnail!==video.thumbnail){if(!image){const next=el('img','card-image');next.src=video.thumbnail;next.alt='';next.loading='lazy';next.referrerPolicy='no-referrer';next.onerror=()=>{card.failedThumbnail=next.getAttribute('src');next.remove()};cover.prepend(next)}else if(image.getAttribute('src')!==video.thumbnail)image.src=video.thumbnail}else image?.remove();
-  cover.querySelector('small').textContent=video.categories?.[0]?.name||'Página inicial';
+  const thumbnail=video.thumbnailUrl||video.thumbnail;
+  if(thumbnail&&card.failedThumbnail!==thumbnail){if(!image){const next=el('img','card-image');next.src=thumbnail;next.alt='';next.loading='lazy';next.referrerPolicy='no-referrer';next.onerror=()=>{card.failedThumbnail=next.getAttribute('src');next.remove()};cover.prepend(next)}else if(image.getAttribute('src')!==thumbnail)image.src=thumbnail}else image?.remove();
   let duration=cover.querySelector('.card-duration');if(video.duration){if(!duration){duration=el('span','card-duration');cover.append(duration)}duration.textContent=video.duration}else duration?.remove();
   const heart=card.querySelector('.card-top button');heart.textContent=saved.has(video.id)?'♥':'♡';heart.setAttribute('aria-label',`${saved.has(video.id)?'Remover dos':'Adicionar aos'} favoritos: ${video.title}`);heart.setAttribute('aria-pressed',String(saved.has(video.id)));
   card.querySelector('h3').textContent=video.title;card.querySelector('p').textContent=`${video.author} · ${video.provider}`;

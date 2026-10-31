@@ -3,7 +3,7 @@ import {sourceUrl} from './config.mjs';
 export const categoryKey=name=>String(name).normalize('NFC').trim().replace(/\s+/g,' ').toLocaleLowerCase('pt-BR');
 const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
 function titleOf($,a){return clean(a.attr('title')||a.attr('aria-label')||a.clone().find('.duration,small,.count').remove().end().text()||a.find('img').attr('alt'))}
-function httpsImage(value,base){try{const u=new URL(value,base);return u.protocol==='https:'&&!u.username&&!u.password?u.href:null}catch{return null}}
+function httpsImage(value,base){try{if(!value)return null;const u=new URL(value,base);return u.protocol==='https:'&&!u.username&&!u.password&&!/(?:blank|placeholder|transparent|spacer)[._-]/i.test(u.pathname)?u.href:null}catch{return null}}
 export function videoIdentity(url,adapter){
  const u=new URL(url);
  if(adapter==='xvideos')return u.pathname.match(/^\/video\.([a-z0-9]{4,64})(?:\/|$)/i)?.[1]||u.pathname.match(/^\/video(\d+)(?:\/|$)/)?.[1];
@@ -30,11 +30,16 @@ export function parseListing(html,url,source){
   if(!a.length)a=card.find('a[href]').filter((_,e)=>{try{return Boolean(videoIdentity(new URL($(e).attr('href'),url),source.adapter))}catch{return false}}).first();
   let href;try{href=sourceUrl(a.attr('href'),source,url)}catch{return}
   const externalId=videoIdentity(href,source.adapter),title=titleOf($,a);if(!externalId||!title||title.length>500)return;
-  const image=card.find('img').first();
-  const thumbnail=httpsImage(image.attr('data-src')||image.attr('data-image')||image.attr('src'),url);
+  let image=card.find('.thumb img,.phimage img,.thumb-image-container img,[data-role="thumb-preview-img"]').first();if(!image.length)image=card.find('img').first();
+  const srcset=image.attr('data-srcset')||image.attr('srcset')||'';
+  const alternatives=[...srcset.matchAll(/(\S+)\s+\d+(?:\.\d+)?[wx](?:\s*,|\s*$)/g)].map(match=>match[1]);
+  const thumbnail=[image.attr('data-src'),image.attr('data-image'),image.attr('data-original'),image.attr('data-lazy-src'),...alternatives,image.attr('src')].map(value=>httpsImage(value,url)).find(Boolean)||null;
   const duration=clean(card.find('.duration,[data-role="video-duration"],.thumb-image-container__duration').first().text()).slice(0,40);
   const author=clean(card.find('.name,.video-thumb-uploader a,.usernameWrap a').first().text())||source.name;
   const u=new URL(href);for(const key of [...u.searchParams.keys()])if(source.adapter!=='pornhub'||key!=='viewkey')u.searchParams.delete(key);
+  // Listing links may contain temporary tracking paths that later return 404.
+  // The provider's stable video route resolves to the current canonical page.
+  if(source.adapter==='xvideos')u.pathname=`/video${/^\d+$/.test(externalId)?'':'.'}${externalId}/video`;
   videos.set(externalId,{externalId,title,sourceUrl:u.href,thumbnail,duration,author:author.slice(0,100)});
  });
  const current=new URL(url),options=[];

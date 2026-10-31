@@ -8,6 +8,7 @@ import {loadConfig,projectRoot,sourceUrl} from './config.mjs';
 import {normalizeRecord,parseSource} from '../public/catalog.js';
 import {videoIdentity} from './adapters.mjs';
 import {LocalPlayback} from './playback.mjs';
+import {LocalThumbnails} from './thumbnails.mjs';
 
 async function jsonBody(req,limit=2*1024*1024){
  if(!String(req.headers['content-type']).includes('application/json')){const e=new Error('Envie JSON.');e.status=415;throw e}
@@ -15,8 +16,9 @@ async function jsonBody(req,limit=2*1024*1024){
  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw new Error('JSON inválido.')}
 }
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data))}
-export function createLocalServer({database,collector,configPath,worker,playback=new LocalPlayback()}={}){
+export function createLocalServer({database,collector,configPath,worker,playback=new LocalPlayback(),thumbnails}={}){
  const config=loadConfig(configPath),db=database||new CatalogDatabase(resolve(projectRoot,'.data/catalog.sqlite'));db.syncSources(config.sources);collector=collector||new Collector(db,{configPath});
+ thumbnails=thumbnails||new LocalThumbnails(db,config.sources);
  function importRecords(records){
   if(!Array.isArray(records)||records.length>10000)throw new Error('Importe até 10.000 registros por vez.');
   let added=0;db.transaction(()=>{for(const raw of records){
@@ -39,6 +41,10 @@ export function createLocalServer({database,collector,configPath,worker,playback
   const origin='http://'+host,url=new URL(req.url,origin);
   if(req.headers.origin&&req.headers.origin!==origin){json(res,403,{error:'Origem não permitida.'});return}
   try{
+   if(url.pathname==='/api/thumbnail'&&['GET','HEAD'].includes(req.method)){
+    const id=url.searchParams.get('id');if(!id||id.length>8192){json(res,400,{error:'Identificador de miniatura inválido.'});return}
+    const response=await thumbnails.fetch(id);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(req.method==='HEAD'?undefined:Buffer.from(await response.arrayBuffer()));return;
+   }
    const mediaPath=url.pathname.match(/^\/api\/playback\/([A-Za-z0-9_-]{32})$/);
    if(mediaPath){
     const abort=new AbortController();res.once('close',()=>{if(!res.writableFinished)abort.abort()});
@@ -69,5 +75,5 @@ export function createLocalServer({database,collector,configPath,worker,playback
    const response=await worker.fetch(request);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));
   }catch(error){if(res.headersSent){res.destroy(error);return}if(!res.destroyed)json(res,error.status||400,{error:error.message})}
  });
- return {server,db,collector,importRecords,playback};
+ return {server,db,collector,importRecords,playback,thumbnails};
 }

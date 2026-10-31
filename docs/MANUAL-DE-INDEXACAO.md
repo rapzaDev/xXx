@@ -4,7 +4,9 @@
 
 Na pasta do projeto, execute npm ci na primeira instalação e npm start para abrir o servidor. Acesse http://localhost:4173. A execução usa seu computador e SQLite local, sem contratar serviços ou consumir API de IA.
 
-O servidor inicia a coleta das fontes configuradas. Os resultados aparecem progressivamente. Você pode buscar por título ou criador e combinar a busca com categoria e fonte. A grade tem paginação; ela não carrega a coleção inteira no navegador. Na ordem padrão, os vídeos entram no fim da sequência. Durante a coleta, os cartões que você está vendo permanecem no lugar; espaços livres são preenchidos e os demais resultados vão para as páginas seguintes. A ordem é obtida dos registros existentes do SQLite, sem criar outra lista salva. O mesmo comportamento vale nos filtros por categoria e fonte e na busca.
+O servidor inicia a coleta das fontes configuradas. Os resultados aparecem progressivamente. Você pode buscar por título ou criador e combinar a busca com categoria e fonte. A grade tem paginação; ela não carrega a coleção inteira no navegador. Os cartões mostram a miniatura, o botão de reprodução e a duração; nomes de categorias e contagens não são sobrepostos à imagem. As miniaturas passam pelo servidor local, que recupera um endereço atualizado na fonte se o link anterior falhar.
+
+Na ordem padrão, os vídeos entram no fim da sequência. Durante a coleta, os cartões que você está vendo permanecem no lugar; espaços livres são preenchidos e os demais resultados vão para as páginas seguintes. A ordem é obtida dos registros existentes do SQLite, sem criar outra lista salva. O mesmo comportamento vale nos filtros por categoria e fonte e na busca.
 
 ## Arquivo de fontes
 

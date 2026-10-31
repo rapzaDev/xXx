@@ -57,7 +57,7 @@ export class CatalogDatabase {
  setSourceStatus(id,status,message=''){this.db.prepare('UPDATE sources SET status=?,message=?,checked_at=? WHERE id=?').run(status,message.slice(0,300),iso(),id)}
  upsertVideo(sourceId,video,category=null){
   const id=video.id||`${sourceId}:${video.externalId}`;const exists=this.db.prepare('SELECT id FROM videos WHERE id=?').get(id),now=iso();
-  this.db.prepare(`INSERT INTO videos(id,source_id,external_id,source_url,title,author,thumbnail,duration,created_at,checked_at,manual_data) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_url=excluded.source_url,title=excluded.title,author=excluded.author,thumbnail=excluded.thumbnail,duration=excluded.duration,checked_at=excluded.checked_at,manual_data=excluded.manual_data,available=1`).run(id,sourceId,String(video.externalId),video.sourceUrl,video.title,video.author||sourceId,video.thumbnail||null,video.duration||'',now,now,video.manualData?JSON.stringify(video.manualData):null);
+  this.db.prepare(`INSERT INTO videos(id,source_id,external_id,source_url,title,author,thumbnail,duration,created_at,checked_at,manual_data) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_url=excluded.source_url,title=excluded.title,author=excluded.author,thumbnail=COALESCE(excluded.thumbnail,videos.thumbnail),duration=excluded.duration,checked_at=excluded.checked_at,manual_data=excluded.manual_data,available=1`).run(id,sourceId,String(video.externalId),video.sourceUrl,video.title,video.author||sourceId,video.thumbnail||null,video.duration||'',now,now,video.manualData?JSON.stringify(video.manualData):null);
   if(category)this.db.prepare('INSERT OR IGNORE INTO video_categories(video_id,category_key) VALUES(?,?)').run(id,category);
   return exists?0:1;
  }
@@ -89,7 +89,7 @@ export class CatalogDatabase {
  serialize(row){
   const parsed=parseSource(row.source_url),manual=row.manual_data?JSON.parse(row.manual_data):{};
   const categories=this.db.prepare('SELECT c.key,c.name FROM video_categories vc JOIN categories c ON c.key=vc.category_key WHERE vc.video_id=? ORDER BY c.name').all(row.id);
-  return {...parsed,...manual,id:row.id,title:row.title,author:row.author,sourceUrl:row.source_url,provider:row.source_id==='manual'?parsed.provider:this.db.prepare('SELECT name FROM sources WHERE id=?').get(row.source_id)?.name,sourceId:row.source_id,thumbnail:row.thumbnail,duration:row.duration,categories,category:categories[0]?.name||'Página inicial',checkedAt:row.checked_at,origin:row.source_id==='manual'?'manual':'collected'};
+  return {...parsed,...manual,id:row.id,title:row.title,author:row.author,sourceUrl:row.source_url,provider:row.source_id==='manual'?parsed.provider:this.db.prepare('SELECT name FROM sources WHERE id=?').get(row.source_id)?.name,sourceId:row.source_id,thumbnail:row.thumbnail,thumbnailUrl:row.source_id==='manual'?row.thumbnail:`/api/thumbnail?id=${encodeURIComponent(row.id)}`,duration:row.duration,categories,category:categories[0]?.name||'Página inicial',checkedAt:row.checked_at,origin:row.source_id==='manual'?'manual':'collected'};
  }
  query({q='',category='',provider='',sort='discovery',page=1,pageSize=40,ids=null,countOnly=false}={}){
   q=String(q).slice(0,200);page=Math.max(1,Math.min(100000,Math.floor(Number(page)||1)));pageSize=Math.max(1,Math.min(80,Math.floor(Number(pageSize)||40)));
