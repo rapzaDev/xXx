@@ -2,8 +2,9 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {createHash} from 'node:crypto';
-import {categoryKey} from './adapters.mjs';
+import {categoryKey,categoryName} from './adapters.mjs';
 import {parseSource} from '../public/catalog.js';
+import {searchGroups,normalizeText} from '../public/search-terms.js';
 const iso=()=>new Date().toISOString();
 export class CatalogDatabase {
  constructor(path){
@@ -29,8 +30,22 @@ export class CatalogDatabase {
    CREATE TRIGGER IF NOT EXISTS video_search_update AFTER UPDATE OF title,author ON videos BEGIN INSERT INTO video_search(video_search,rowid,title,author) VALUES('delete',old.rowid,old.title,old.author); INSERT INTO video_search(rowid,title,author) VALUES(new.rowid,new.title,new.author); END;
   `);
   if(!this.db.prepare('PRAGMA table_info(jobs)').all().some(column=>column.name==='refresh'))this.db.exec('ALTER TABLE jobs ADD COLUMN refresh INTEGER NOT NULL DEFAULT 0');
-  this.db.exec('PRAGMA user_version=2');
+  if(this.db.prepare('PRAGMA user_version').get().user_version<3){this.normalizeCategories();this.db.exec('PRAGMA user_version=3')}
+
  }
+ normalizeCategories(){this.transaction(()=>{
+  const rows=this.db.prepare("SELECT DISTINCT c.* FROM categories c JOIN source_categories sc ON sc.category_key=c.key WHERE sc.source_id!='manual'").all();
+  for(const row of rows){const name=categoryName(row.name),key=categoryKey(name);if(!key||key===row.key)continue;
+   this.db.prepare('INSERT OR IGNORE INTO categories(key,name) VALUES(?,?)').run(key,name);
+   this.db.prepare('INSERT OR IGNORE INTO video_categories(video_id,category_key) SELECT video_id,? FROM video_categories WHERE category_key=? ORDER BY rowid').run(key,row.key);
+   this.db.prepare('DELETE FROM video_categories WHERE category_key=?').run(row.key);
+   this.db.prepare('UPDATE source_categories SET category_key=? WHERE category_key=?').run(key,row.key);
+   this.db.prepare('UPDATE jobs SET category_key=? WHERE category_key=?').run(key,row.key);
+   this.db.prepare('INSERT OR IGNORE INTO page_fingerprints(source_id,category_key,fingerprint,url) SELECT source_id,?,fingerprint,url FROM page_fingerprints WHERE category_key=?').run(key,row.key);
+   this.db.prepare('DELETE FROM page_fingerprints WHERE category_key=?').run(row.key);
+   this.db.prepare('DELETE FROM categories WHERE key=?').run(row.key);
+  }
+ })}
  close(){this.db.close()}
  transaction(fn){this.db.exec('BEGIN IMMEDIATE');try{const result=fn();this.db.exec('COMMIT');return result}catch(e){this.db.exec('ROLLBACK');throw e}}
  syncSources(sources){this.transaction(()=>{
@@ -39,7 +54,7 @@ export class CatalogDatabase {
   this.db.prepare("INSERT OR IGNORE INTO sources(id,name,url,status,checked_at) VALUES('manual','Adicionados manualmente','', 'ready',?)").run(iso());
  })}
  addCategory(sourceId,{name,url}){
-  const key=categoryKey(name);if(!key)return null;
+  name=sourceId==='manual'?name:categoryName(name);const key=categoryKey(name);if(!key)return null;
   this.db.prepare('INSERT OR IGNORE INTO categories(key,name) VALUES(?,?)').run(key,name.trim().replace(/\s+/g,' '));
   this.db.prepare('INSERT OR IGNORE INTO source_categories(source_id,url,category_key) VALUES(?,?,?)').run(sourceId,url,key);return key;
  }
@@ -50,7 +65,10 @@ export class CatalogDatabase {
   this.db.prepare("UPDATE jobs SET state='queued',refresh=1,attempts=0,error='',next_at=? WHERE source_id=? AND state='done' AND ((kind IN ('discover','directory') AND updated_at<?) OR (kind='category' AND position=0 AND updated_at<?))").run(iso(),source.id,dayAgo,cutoff);
   this.db.prepare("UPDATE jobs SET state='queued',attempts=0,error='',next_at=? WHERE source_id=? AND state IN ('blocked','error') AND updated_at<?").run(iso(),source.id,dayAgo);
  }
- nextJob(sourceId,{preferRefresh=false}={}){return this.db.prepare("SELECT * FROM jobs WHERE source_id=? AND state IN ('queued','error') AND attempts<3 AND next_at<=? ORDER BY CASE WHEN refresh=? THEN 0 ELSE 1 END,CASE kind WHEN 'discover' THEN 0 WHEN 'directory' THEN 1 ELSE 2 END,position,updated_at,id LIMIT 1").get(sourceId,iso(),preferRefresh?1:0)}
+ nextJob(sourceId,{preferRefresh=false,priorityCategories=[]}={}){
+  const filter=priorityCategories.length?" AND kind='category' AND category_key IN (SELECT value FROM json_each(?))":'';
+  return this.db.prepare("SELECT * FROM jobs WHERE source_id=? AND state IN ('queued','error') AND attempts<3 AND next_at<=?"+filter+" ORDER BY CASE WHEN refresh=? THEN 0 ELSE 1 END,CASE kind WHEN 'discover' THEN 0 WHEN 'directory' THEN 1 ELSE 2 END,position,updated_at,id LIMIT 1").get(sourceId,iso(),...(priorityCategories.length?[JSON.stringify(priorityCategories)]:[]),preferRefresh?1:0);
+ }
  usage(sourceId){return Number(this.db.prepare('SELECT pages FROM daily_usage WHERE day=? AND source_id=?').get(iso().slice(0,10),sourceId)?.pages||0)}
  countRequest(sourceId){this.db.prepare('INSERT INTO daily_usage(day,source_id,pages) VALUES(?,?,1) ON CONFLICT(day,source_id) DO UPDATE SET pages=pages+1').run(iso().slice(0,10),sourceId)}
  finishJob(id,error=null){const now=iso();if(error)this.db.prepare("UPDATE jobs SET state=?,attempts=attempts+1,error=?,updated_at=?,next_at=? WHERE id=?").run(error.blocked?'blocked':'error',String(error.message).slice(0,300),now,new Date(Date.now()+15*60000).toISOString(),id);else this.db.prepare("UPDATE jobs SET state='done',error='',updated_at=? WHERE id=?").run(now,id)}
@@ -91,21 +109,27 @@ export class CatalogDatabase {
   const categories=this.db.prepare('SELECT c.key,c.name FROM video_categories vc JOIN categories c ON c.key=vc.category_key WHERE vc.video_id=? ORDER BY c.name').all(row.id);
   return {...parsed,...manual,id:row.id,title:row.title,author:row.author,sourceUrl:row.source_url,provider:row.source_id==='manual'?parsed.provider:this.db.prepare('SELECT name FROM sources WHERE id=?').get(row.source_id)?.name,sourceId:row.source_id,thumbnail:row.thumbnail,thumbnailUrl:row.source_id==='manual'?row.thumbnail:`/api/thumbnail?id=${encodeURIComponent(row.id)}`,duration:row.duration,categories,category:categories[0]?.name||'Página inicial',checkedAt:row.checked_at,origin:row.source_id==='manual'?'manual':'collected'};
  }
- query({q='',category='',provider='',sort='discovery',page=1,pageSize=40,ids=null,countOnly=false}={}){
+ query({q='',category='',provider='',sort='discovery',page=1,pageSize=40,ids=null,countOnly=false,snapshot=null}={}){
   q=String(q).slice(0,200);page=Math.max(1,Math.min(100000,Math.floor(Number(page)||1)));pageSize=Math.max(1,Math.min(80,Math.floor(Number(pageSize)||40)));
-  const where=['v.available=1','s.enabled=1'],params=[];
-  const words=q.match(/[\p{L}\p{N}]+/gu)||[];
-  if(words.length){where.push('v.rowid IN (SELECT rowid FROM video_search WHERE video_search MATCH ?)');params.push(words.slice(0,16).map(w=>'"'+w+'"*').join(' AND '))}
-  if(category){where.push('EXISTS(SELECT 1 FROM video_categories vc WHERE vc.video_id=v.id AND vc.category_key=?)');params.push(String(category))}
+  // Keep pagination within the records present when this view was opened.
+  // Only two row boundaries travel with the requests; no list is persisted.
+  if(!snapshot||!Number.isSafeInteger(snapshot.videos)||snapshot.videos<0||!Number.isSafeInteger(snapshot.categories)||snapshot.categories<0)snapshot={videos:this.db.prepare('SELECT COALESCE(MAX(rowid),0) n FROM videos').get().n,categories:this.db.prepare('SELECT COALESCE(MAX(rowid),0) n FROM video_categories').get().n};
+  const where=['v.available=1','s.enabled=1','v.rowid<=?'],params=[snapshot.videos];
+  const groups=searchGroups(q),categoryNames=groups.length?this.db.prepare('SELECT key,name FROM categories').all().map(item=>({...item,normalized:' '+normalizeText(item.name)+' '})):[];
+  for(const group of groups){
+   const expression=group.map(term=>'"'+term.replaceAll('"','""')+'"*').join(' OR ');
+   const keys=categoryNames.filter(item=>group.some(term=>item.normalized.includes(' '+term+' ')||item.normalized.trim().startsWith(term))).map(item=>item.key);
+   where.push('(v.rowid IN (SELECT rowid FROM video_search WHERE video_search MATCH ?) OR EXISTS(SELECT 1 FROM video_categories search_vc WHERE search_vc.video_id=v.id AND search_vc.rowid<=? AND search_vc.category_key IN (SELECT value FROM json_each(?))))');params.push(expression,snapshot.categories,JSON.stringify(keys));
+  }
+  if(category){where.push('EXISTS(SELECT 1 FROM video_categories vc WHERE vc.video_id=v.id AND vc.category_key=? AND vc.rowid<=?)');params.push(String(category),snapshot.categories)}
   if(provider){where.push('v.source_id=?');params.push(String(provider))}
   if(ids!==null){if(!Array.isArray(ids)||ids.length>1000)throw new Error('Lista de favoritos inválida.');where.push('v.id IN (SELECT value FROM json_each(?))');params.push(JSON.stringify(ids.map(String)))}
   const from='FROM videos v JOIN sources s ON s.id=v.source_id WHERE '+where.join(' AND ');
   const total=Number(this.db.prepare('SELECT COUNT(*) AS n '+from).get(...params).n);
-  const metadata={total,page,pageSize,pages:Math.ceil(total/pageSize)};
+  const metadata={total,page,pageSize,pages:Math.ceil(total/pageSize),snapshot};
   if(countOnly)return metadata;
-  // SQLite already records insertion order. Reuse it without storing a second
-  // feed or per-visitor snapshot. Category membership has its own insertion order.
-  const order=sort==='title'?'v.title COLLATE NOCASE ASC,v.rowid':category?'(SELECT vc.rowid FROM video_categories vc WHERE vc.video_id=v.id AND vc.category_key=?) ASC,v.rowid':'v.rowid ASC';
+  // Newest discoveries first; rechecking an existing record does not promote it.
+  const order=sort==='title'?'v.title COLLATE NOCASE ASC,v.rowid':category?'(SELECT vc.rowid FROM video_categories vc WHERE vc.video_id=v.id AND vc.category_key=?) DESC,v.rowid DESC':'v.rowid DESC';
   const rows=this.db.prepare('SELECT v.* '+from+' ORDER BY '+order+' LIMIT ? OFFSET ?').all(...params,...(category&&sort!=='title'?[String(category)]:[]),pageSize,(page-1)*pageSize);
   return {...metadata,videos:rows.map(row=>this.serialize(row))};
  }

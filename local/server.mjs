@@ -61,6 +61,7 @@ export function createLocalServer({database,collector,configPath,worker,playback
     const response=await worker.fetch(new Request(origin+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
     res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));return;
    }
+   if(url.pathname==='/api/catalog/facets'&&req.method==='GET'){const {categories,sources}=db.facets();json(res,200,{categories,sources:sources.map(({id,name,count})=>({id,name,count})),totals:{videos:sources.reduce((sum,source)=>sum+source.count,0),categories:categories.length}});return}
    if(url.pathname==='/api/catalog/status'&&req.method==='GET'){json(res,200,{...db.status(),collector:{running:collector.running||db.isCollecting(),nextRun:collector.nextRun},settings:loadConfig(configPath).collection});return}
    if(url.pathname==='/api/catalog/query'&&req.method==='POST'){json(res,200,db.query(await jsonBody(req,100000)));return}
    if(url.pathname==='/api/catalog/export'&&req.method==='GET'){res.setHeader('Content-Disposition','attachment; filename="dojo-atlas-catalogo.json"');json(res,200,{version:2,exportedAt:new Date().toISOString(),videos:db.export()});return}

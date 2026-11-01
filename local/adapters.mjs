@@ -2,6 +2,8 @@ import {load} from 'cheerio';
 import {sourceUrl} from './config.mjs';
 export const categoryKey=name=>String(name).normalize('NFC').trim().replace(/\s+/g,' ').toLocaleLowerCase('pt-BR');
 const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
+export function categoryName(value){return clean(value).replace(/\s*\([\d.,\s]+\)\s*$/,'').replace(/\s+(?:\d{1,3}(?:[,.]\d{3})+|\d{4,})(?:\s+videos)?$/i,'').replace(/\s+(?:Porn Videos|Videos|Category)$/i,'').trim()}
+
 function titleOf($,a){return clean(a.attr('title')||a.attr('aria-label')||a.clone().find('.duration,small,.count').remove().end().text()||a.find('img').attr('alt'))}
 function httpsImage(value,base){try{if(!value)return null;const u=new URL(value,base);return u.protocol==='https:'&&!u.username&&!u.password&&!/(?:blank|placeholder|transparent|spacer)[._-]/i.test(u.pathname)?u.href:null}catch{return null}}
 export function videoIdentity(url,adapter){
@@ -17,7 +19,7 @@ export function parseListing(html,url,source){
   const a=$(element);let u;try{u=new URL(sourceUrl(a.attr('href'),source,url))}catch{return}
   const isCategory=source.adapter==='xvideos'?/^\/c\/[^/]+-\d+\/?$/.test(u.pathname):source.adapter==='xhamster'?/^\/categories\/[^/]+\/?$/.test(u.pathname):/^\/categories\/[^/]+\/?$/.test(u.pathname)||(u.pathname==='/video'&&/^\d+$/.test(u.searchParams.get('c')||''));
   if(!isCategory)return;
-  let name=titleOf($,a).replace(/\s*\([\d.,\s]+\)\s*$/,'');
+  let name=categoryName(titleOf($,a));
   if(!name||name.length>100)return;
   // Remove decorative site suffixes while preserving the original category name.
   name=name.replace(/\s+(?:Porn Videos|Videos|Category)$/i,'').trim();

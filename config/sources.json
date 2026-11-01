@@ -7,6 +7,7 @@
     "timeoutMs": 20000,
     "maxResponseBytes": 5000000
   },
+  "priorityCategories": ["Amateur", "Verified Amateurs"],
   "sources": [
     {"id": "xvideos", "name": "XVideos", "url": "https://www.xvideos.com", "adapter": "xvideos", "enabled": true},
     {"id": "xhamster", "name": "xHamster", "url": "https://xhamster.com", "adapter": "xhamster", "directory": "/categories", "enabled": true},

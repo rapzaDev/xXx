@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {loadConfig} from './config.mjs';
 import {fetchPage,robotsAllows} from './network.mjs';
-import {parseListing} from './adapters.mjs';
+import {parseListing,categoryKey} from './adapters.mjs';
 export class Collector {
  constructor(database,{configPath,fetcher=fetch}={}){this.database=database;this.configPath=configPath;this.fetcher=fetcher;this.running=false;this.controller=null;this.nextRun=null;this.timer=null;this.paused=false}
  async run(){
@@ -22,7 +22,7 @@ export class Collector {
     }
     for(let i=0;i<config.collection.pagesPerSourcePerRun;i++){
      if(signal.aborted||db.usage(source.id)>=config.collection.pagesPerSourcePerDay)break;
-     const job=db.nextJob(source.id,{preferRefresh:i%5===0});if(!job)break;db.heartbeat(owner);
+     const options={preferRefresh:i%5===0};const job=(i%2===0&&config.priorityCategories.length?db.nextJob(source.id,{...options,priorityCategories:config.priorityCategories.map(categoryKey)}):null)||db.nextJob(source.id,options);if(!job)break;db.heartbeat(owner);
      try{
       if(!robotsAllows(robots,job.url)){const error=new Error('A coleta desta página está desabilitada pelo robots.txt da fonte.');error.blocked=true;throw error}
       if(sourcePages)await delay(config.collection.requestDelayMs,undefined,{signal});

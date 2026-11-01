@@ -68,6 +68,7 @@ test('API pesquisa no banco, exporta registros e recusa alterações de outra or
  const {server,collector}=createLocalServer({database:db,configPath,worker:{fetch:()=>new Response('ok')}});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{collector.stop();await new Promise(resolve=>server.close(resolve));db.close()});
  const origin=`http://127.0.0.1:${server.address().port}`;
  const result=await fetch(origin+'/api/catalog/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:'exercicio',category:key})});assert.equal(result.status,200);assert.equal((await result.json()).total,1);
+ const facets=await (await fetch(origin+'/api/catalog/facets')).json();assert.equal(facets.totals.videos,1);assert.equal('collector' in facets,false);assert.equal('pending' in facets.totals,false);assert.deepEqual(Object.keys(facets.sources[0]).sort(),['count','id','name']);
  const exported=await (await fetch(origin+'/api/catalog/export')).json();assert.equal(exported.videos.length,1);
  const forbidden=await fetch(origin+'/api/collector/run',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://outside.example'},body:'{}'});assert.equal(forbidden.status,403);
  const invalid=await fetch(origin+'/api/catalog/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify([{sourceUrl:'javascript:alert(1)'}])});assert.equal(invalid.status,400);assert.equal(db.query().total,1);
@@ -82,20 +83,23 @@ test('novidades não impedem que a fila avance para páginas antigas',t=>{
  assert.equal(db.nextJob(source.id,{preferRefresh:true}).position,0);assert.equal(db.nextJob(source.id).position,50);db.close();
 });
 
-test('novos vídeos entram depois dos existentes e a ordem persiste sem salvar outra lista',t=>{
+test('home mostra novidades primeiro e páginas abertas mantêm sua seleção sem repetição',t=>{
  const {dbPath}=environment(t);let db=new CatalogDatabase(dbPath);db.syncSources([source]);
- db.upsertVideo('one',video('zzzz1'));db.upsertVideo('one',video('aaaa1'));
- const original=db.query({pageSize:2}).videos.map(v=>v.id);assert.deepEqual(original,['one:zzzz1','one:aaaa1']);
- db.upsertVideo('one',video('00001'));assert.deepEqual(db.query({pageSize:2}).videos.map(v=>v.id),original);assert.deepEqual(db.query({page:2,pageSize:2}).videos.map(v=>v.id),['one:00001']);
- const count=db.query({countOnly:true,pageSize:2});assert.equal(count.total,3);assert.equal(count.pages,2);assert.equal('videos' in count,false);
- db.close();db=new CatalogDatabase(dbPath);assert.deepEqual(db.query({pageSize:2}).videos.map(v=>v.id),original);db.close();
+ db.upsertVideo('one',video('zzzz1'));db.upsertVideo('one',video('aaaa1'));db.upsertVideo('one',video('bbbb1'));
+ const first=db.query({pageSize:2});assert.deepEqual(first.videos.map(v=>v.id),['one:bbbb1','one:aaaa1']);
+ db.upsertVideo('one',video('00001'));assert.deepEqual(db.query({pageSize:2}).videos.map(v=>v.id),['one:00001','one:bbbb1']);
+ const next=db.query({page:2,pageSize:2,snapshot:first.snapshot});assert.deepEqual(next.videos.map(v=>v.id),['one:zzzz1']);assert.equal(next.total,3);
+ const count=db.query({countOnly:true,pageSize:2,snapshot:first.snapshot});assert.equal(count.total,3);assert.equal(count.pages,2);assert.equal('videos' in count,false);
+ db.upsertVideo('one',{...video('zzzz1'),title:'Título antigo revisado'});assert.equal(db.query().videos[0].id,'one:00001');
+ db.close();db=new CatalogDatabase(dbPath);assert.deepEqual(db.query({pageSize:2}).videos.map(v=>v.id),['one:00001','one:bbbb1']);db.close();
 });
-test('vídeo antigo associado a uma categoria posteriormente entra no fim daquele filtro',t=>{
+test('novas associações aparecem no início da categoria sem deslocar a paginação aberta',t=>{
  const {dbPath}=environment(t);const db=new CatalogDatabase(dbPath);db.syncSources([source]);
  db.upsertVideo('one',video('old01'));const key=db.addCategory('one',{name:'Training',url:source.url+'/c/Training-1'});
- db.upsertVideo('one',video('new01'),key);db.upsertVideo('one',video('new02'),key);
- const original=db.query({category:key,q:'exercicio',provider:'one',pageSize:2}).videos.map(v=>v.id);db.upsertVideo('one',video('old01'),key);
- assert.deepEqual(db.query({category:key,q:'exercicio',provider:'one',pageSize:2}).videos.map(v=>v.id),original);assert.equal(db.query({category:key,q:'exercicio',provider:'one',page:2,pageSize:2}).videos[0].id,'one:old01');db.close();
+ db.upsertVideo('one',video('new01'),key);db.upsertVideo('one',video('new02'),key);db.upsertVideo('one',video('new03'),key);
+ const filters={category:key,q:'exercicio',provider:'one',pageSize:2},first=db.query(filters);assert.deepEqual(first.videos.map(v=>v.id),['one:new03','one:new02']);
+ db.upsertVideo('one',video('old01'),key);assert.deepEqual(db.query(filters).videos.map(v=>v.id),['one:old01','one:new03']);assert.deepEqual(db.query({...filters,page:2,snapshot:first.snapshot}).videos.map(v=>v.id),['one:new01']);
+ db.upsertVideo('one',video('new04'),key);assert.equal(db.query(filters).videos[0].id,'one:new04');assert.deepEqual(db.query({...filters,snapshot:first.snapshot}).videos.map(v=>v.id),first.videos.map(v=>v.id));db.close();
 });
 
 test('preview lazy usa srcset real em vez de imagem de preenchimento',()=>{
@@ -106,4 +110,29 @@ test('preview lazy usa srcset real em vez de imagem de preenchimento',()=>{
 test('links de tracking do XVideos são coletados como endereços estáveis pelo ID',()=>{
  const markup='<div class="thumb-block"><p class="title"><a href="/video.demo123/1234/0/tracking" title="Demonstração">Demo</a></p><img src="https://images.example/demo.jpg"></div>';
  const result=parseListing(markup,source.url,source);assert.equal(result.videos[0].sourceUrl,'https://source.example/video.demo123/video');assert.equal(result.videos[0].externalId,'demo123');
+});
+
+
+test('nomes de categorias removem contagens sem apagar números que fazem parte do nome',()=>{
+ const result=parseListing('<a href="/video?c=3">Amateur 570,403</a><a href="/video?c=138">Verified Amateurs (781,280)</a><a href="/video?c=55">Over 50</a>','https://source.example/categories',{...source,adapter:'pornhub'});
+ assert.deepEqual(result.categories.map(c=>c.name),['Amateur','Verified Amateurs','Over 50']);
+});
+
+test('migração une categorias antigas preservando vídeos, ordem existente e progresso de paginação',t=>{
+ const {dbPath}=environment(t);let db=new CatalogDatabase(dbPath);db.syncSources([source]);const key=db.addCategory('one',{name:'Amateur',url:source.url+'/c/Amateur-1'});db.upsertVideo('one',video('base1'),key);
+ db.db.prepare('INSERT INTO categories(key,name) VALUES(?,?)').run('amateur 570,403','Amateur 570,403');
+ db.db.prepare('INSERT INTO source_categories VALUES(?,?,?)').run('one',source.url+'/video?c=3','amateur 570,403');
+ db.upsertVideo('one',video('base1'),'amateur 570,403');db.upsertVideo('one',video('extra1'),'amateur 570,403');
+ db.enqueue('one',source.url+'/video?c=3&page=8','category','amateur 570,403',7);
+ const existing=db.query({category:key}).videos.map(v=>v.id),rows=db.db.prepare('SELECT rowid,id FROM videos ORDER BY rowid').all();db.db.exec('PRAGMA user_version=2');db.close();
+ db=new CatalogDatabase(dbPath);assert.equal(db.query().total,2);assert.deepEqual(db.query({category:key}).videos.map(v=>v.id),['one:extra1',...existing]);assert.deepEqual(db.db.prepare('SELECT rowid,id FROM videos ORDER BY rowid').all(),rows);assert.equal(db.facets().categories.length,1);assert.equal(db.nextJob('one').category_key,key);assert.equal(db.nextJob('one').position,7);db.close();
+ db=new CatalogDatabase(dbPath);assert.equal(db.query({category:key}).total,2);db.close();
+});
+
+test('prioridade avança amadores em metade das páginas sem impedir outras categorias ou ultrapassar limites',async t=>{
+ const {dbPath,configPath}=environment(t,{pagesPerSourcePerRun:6,pagesPerSourcePerDay:6});const config=loadConfig(configPath);config.priorityCategories=['Amateur'];writeFileSync(configPath,JSON.stringify(config));
+ const db=new CatalogDatabase(dbPath);db.syncSources([source]);const amateur=db.addCategory('one',{name:'Amateur',url:source.url+'/c/Amateur-1'}),other=db.addCategory('one',{name:'Training',url:source.url+'/c/Training-2'});
+ db.enqueue('one',source.url+'/c/Amateur-1/20','category',amateur,20);db.enqueue('one',source.url+'/c/Training-2','category',other,0);
+ const fetcher=async url=>{if(url.endsWith('/robots.txt'))return html('User-agent: *\nAllow: /');if(url===source.url+'/')return html('<a href="/c/Training-2">Training</a>');const u=new URL(url),position=Number(u.pathname.match(/\/(\d+)$/)?.[1]||0),am=u.pathname.includes('Amateur');return html(card((am?'am':'tr')+String(position).padStart(4,'0'))+`<a rel="next" href="/c/${am?'Amateur-1':'Training-2'}/${position+1}">Next</a>`)};
+ const result=await new Collector(db,{configPath,fetcher}).run();assert.equal(result.pages,6);assert.equal(db.usage('one'),6);assert.equal(db.query({category:amateur}).total,3);assert.equal(db.query({category:other}).total,2);assert.equal((await new Collector(db,{configPath,fetcher}).run()).pages,0);db.close();
 });

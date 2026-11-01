@@ -10,6 +10,8 @@ export function loadConfig(path=new URL('../config/sources.json',import.meta.url
   if(!/^[a-z0-9-]{1,40}$/.test(s.id)||seen.has(s.id)||u.protocol!=='https:'||u.port||u.username||u.password||!['xvideos','xhamster','pornhub'].includes(s.adapter))throw new Error('Configuração de fonte inválida.');
   seen.add(s.id);s.url=u.origin;s.name=String(s.name||s.id).slice(0,80);
  }
+ if(config.priorityCategories!==undefined&&(!Array.isArray(config.priorityCategories)||config.priorityCategories.length>20||config.priorityCategories.some(name=>typeof name!=='string'||!name.trim()||name.length>100)))throw new Error('Categorias prioritárias inválidas.');
+ config.priorityCategories=config.priorityCategories||[];
  const defaults={intervalHours:6,pagesPerSourcePerRun:5,pagesPerSourcePerDay:100,requestDelayMs:1200,timeoutMs:20000,maxResponseBytes:5000000};
  config.collection={...defaults,...config.collection};
  for(const [key,value] of Object.entries(config.collection))if(!Number.isFinite(value)||value<=0)throw new Error(`Limite inválido: ${key}`);
